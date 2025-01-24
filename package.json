@@ -1,0 +1,12 @@
+{
+  "name": "json-insights-viewer",
+  "version": "1.0.0",
+  "description": "JSON Insights Viewer",
+  "scripts": {
+    "build": "tailwindcss -i ./static/css/input.css -o ./static/css/styles.css --minify",
+    "watch": "tailwindcss -i ./static/css/input.css -o ./static/css/styles.css --watch"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.4.1"
+  }
+}
