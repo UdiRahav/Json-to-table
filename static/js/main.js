@@ -147,23 +147,16 @@ document.addEventListener('DOMContentLoaded', function() {
         reader.readAsText(file);
     });
 
-    // Generate default filename based on current date and first insight
-    function generateDefaultFilename() {
-        const date = new Date().toISOString().split('T')[0];
-        const firstInsight = allInsights[0];
-        const insightType = firstInsight?.useCaseId || 'insights';
-        return `${insightType}_${date}.xlsx`;
-    }
-
     // Handle modal events
     downloadCSVBtn?.addEventListener('click', function() {
-        if (!currentJsonData) {
+        if (!currentJsonData || !allInsights || allInsights.length === 0) {
             showError('No data to download');
             return;
         }
         
         // Set default filename
-        filenameInput.value = generateDefaultFilename();
+        const requestId = currentJsonData.requestId || 'insights';
+        filenameInput.value = `${requestId}_${new Date().toISOString().split('T')[0]}.xlsx`;
         filenameModal.classList.remove('hidden');
     });
 
@@ -179,22 +172,55 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 
     confirmDownloadBtn?.addEventListener('click', async function() {
-        const filename = filenameInput.value.trim() || generateDefaultFilename();
+        if (!currentJsonData || !allInsights || allInsights.length === 0) {
+            showError('No data to download');
+            return;
+        }
+
+        const filename = filenameInput.value.trim() || `insights_${new Date().toISOString().split('T')[0]}.xlsx`;
         
         try {
+            // Convert facts to the correct format for download
+            const processedInsights = allInsights.map(insight => {
+                const processedFacts = {};
+                if (insight.facts) {
+                    Object.entries(insight.facts).forEach(([factName, factData]) => {
+                        if (factData.headers && factData.rows) {
+                            processedFacts[factName] = {
+                                cols: factData.headers,
+                                rows: factData.rows,
+                                type: factData.type
+                            };
+                        }
+                    });
+                }
+                return {
+                    ...insight,
+                    facts: processedFacts
+                };
+            });
+
+            // Make sure we're sending the full data structure
+            const dataToSend = {
+                requestId: currentJsonData.requestId,
+                insights: processedInsights
+            };
+            
+            console.log('Sending data for download:', dataToSend);
             const response = await fetch('/download', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
-                    data: currentJsonData,
+                    data: dataToSend,
                     filename: filename
                 })
             });
 
             if (!response.ok) {
-                throw new Error('Download failed');
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Download failed');
             }
 
             const blob = await response.blob();
@@ -208,6 +234,7 @@ document.addEventListener('DOMContentLoaded', function() {
             document.body.removeChild(a);
             filenameModal.classList.add('hidden');
         } catch (error) {
+            console.error('Download error:', error);
             showError('Error downloading file: ' + error.message);
         }
     });
@@ -226,6 +253,7 @@ document.addEventListener('DOMContentLoaded', function() {
             
             // If the data already has an insights array, use it directly
             const dataToSend = jsonData.insights ? jsonData : {
+                requestId: new Date().getTime().toString(),
                 insights: Array.isArray(jsonData) ? jsonData : [jsonData]
             };
             
@@ -343,7 +371,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
 
                 // Create table for fact data
-                if (factData.headers && factData.headers.length > 0) {
+                if (factData.headers && factData.rows) {
                     const tableWrapper = document.createElement('div');
                     tableWrapper.className = 'overflow-x-auto';
                     

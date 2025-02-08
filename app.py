@@ -1,12 +1,9 @@
-from flask import Flask, render_template, request, jsonify, send_file
+from flask import Flask, request, jsonify, send_file, render_template
+import pandas as pd
+from io import BytesIO
 import json
-import csv
-from io import StringIO, BytesIO
-import datetime
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
-from openpyxl.utils import get_column_letter
-import pandas as pd
 
 app = Flask(__name__)
 
@@ -62,9 +59,11 @@ def convert():
         }
         print(f"Returning {len(processed_insights)} insights")
         return jsonify(result)
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as e:
+        print(f"JSON decode error: {str(e)}")
         return jsonify({'error': 'Invalid JSON format'}), 400
     except Exception as e:
+        print(f"Error: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/favicon.ico')
@@ -76,6 +75,7 @@ def download_excel():
     try:
         request_data = request.get_json()
         if not request_data or 'data' not in request_data:
+            print("No data provided")
             return jsonify({'error': 'No data provided'}), 400
             
         data = request_data['data']
@@ -85,64 +85,205 @@ def download_excel():
         if not filename.lower().endswith('.xlsx'):
             filename += '.xlsx'
 
+        print(f"Creating Excel file: {filename}")
+        
         # Create Excel file in memory
         output = BytesIO()
-        writer = pd.ExcelWriter(output, engine='openpyxl')
         
-        # Process each insight
-        for i, insight in enumerate(data.get('insights', [])):
-            facts = insight.get('facts', {})
-            for fact_name, fact_data in facts.items():
-                if isinstance(fact_data, dict) and 'cols' in fact_data and 'rows' in fact_data:
-                    # Create DataFrame from fact data
-                    df = pd.DataFrame(fact_data['rows'], columns=fact_data['cols'])
+        try:
+            with pd.ExcelWriter(output, engine='openpyxl', mode='w') as writer:
+                insights = data.get('insights', [])
+                print(f"Processing {len(insights)} insights")
+                
+                if not insights:
+                    print("No insights found")
+                    df = pd.DataFrame({'Message': ['No data available']})
+                    df.to_excel(writer, sheet_name='No Data', index=False)
+                    return
+                
+                # Group insights by use case ID
+                use_case_insights = {}
+                for insight in insights:
+                    use_case_id = insight.get('useCaseId', 'Unknown')
+                    if use_case_id not in use_case_insights:
+                        use_case_insights[use_case_id] = []
+                    use_case_insights[use_case_id].append(insight)
+                
+                # Process each use case
+                for use_case_id, case_insights in use_case_insights.items():
+                    print(f"Processing use case: {use_case_id}")
                     
-                    # Try to convert date columns and sort
-                    date_columns = []
-                    for col in df.columns:
-                        # Check if column name contains date-related keywords
-                        if any(date_word in col.lower() for date_word in ['date', 'time', 'day']):
-                            try:
-                                # Try to convert to datetime
-                                df[col] = pd.to_datetime(df[col])
-                                date_columns.append(col)
-                            except:
-                                continue
+                    # Create a list to store all DataFrames and their styles for this use case
+                    all_dfs = []
                     
-                    # Sort by the first date column found if any exist
-                    if date_columns:
-                        df = df.sort_values(by=date_columns[0])
+                    # Process each insight in this use case
+                    for i, insight in enumerate(case_insights, 1):
+                        facts = insight.get('facts', {})
+                        
+                        # Add insight header
+                        header = pd.DataFrame({
+                            '': [f'Insight {i} Details']
+                        })
+                        all_dfs.append((header, 'header'))
+                        
+                        # Add insight details as a small table
+                        insight_details = pd.DataFrame({
+                            'Property': [
+                                'Insight ID', 'Type', 'Segment', 
+                                'Score', 'Status', 'Generated Date'
+                            ],
+                            'Value': [
+                                insight.get('insightId', ''),
+                                insight.get('type', ''),
+                                insight.get('segment', ''),
+                                insight.get('score', ''),
+                                insight.get('status', ''),
+                                insight.get('generatedDate', '')
+                            ]
+                        })
+                        all_dfs.append((insight_details, 'details'))
+                        
+                        # Add a separator
+                        separator = pd.DataFrame({'': ['']})
+                        all_dfs.append((separator, 'separator'))
+                        
+                        # Process each fact
+                        for fact_name, fact_data in facts.items():
+                            if isinstance(fact_data, dict) and 'cols' in fact_data and 'rows' in fact_data:
+                                print(f"Processing fact: {fact_name}")
+                                
+                                # Add fact title
+                                title = pd.DataFrame({
+                                    '': [f'Fact: {fact_name}']
+                                })
+                                all_dfs.append((title, 'fact_title'))
+                                
+                                # Create DataFrame from fact data
+                                df = pd.DataFrame(fact_data['rows'], columns=fact_data['cols'])
+                                
+                                # Try to convert date columns and sort
+                                date_columns = []
+                                for col in df.columns:
+                                    if any(date_word in col.lower() for date_word in ['date', 'time', 'day']):
+                                        try:
+                                            # Convert to datetime and then to string in a consistent format
+                                            dates = pd.to_datetime(df[col])
+                                            df[col] = dates.dt.strftime('%Y-%m-%d %H:%M:%S')
+                                            date_columns.append(col)
+                                        except Exception as e:
+                                            print(f"Failed to convert column {col} to datetime: {str(e)}")
+                                            continue
+                                
+                                # Sort by the first date column found if any exist
+                                if date_columns:
+                                    sort_col = date_columns[0]
+                                    # Temporarily convert back to datetime for sorting
+                                    temp_dates = pd.to_datetime(df[sort_col])
+                                    df = df.iloc[temp_dates.argsort()]
+                                
+                                # Add the fact data
+                                all_dfs.append((df, 'fact_data'))
+                                
+                                # Add a separator
+                                all_dfs.append((separator, 'separator'))
                     
-                    # Create sheet name from insight and fact name
-                    sheet_name = f"{insight.get('useCaseId', f'Insight{i+1}')}_{fact_name}"[:31]
-                    
-                    # Write DataFrame to Excel sheet
-                    df.to_excel(writer, sheet_name=sheet_name, index=False)
-                    
-                    # Get the worksheet
-                    worksheet = writer.sheets[sheet_name]
-                    
-                    # Format date columns
-                    for col_idx, col_name in enumerate(df.columns):
-                        if col_name in date_columns:
-                            # Format date cells
-                            for row in range(2, len(df) + 2):  # Start from row 2 to skip header
-                                cell = worksheet.cell(row=row, column=col_idx + 1)
-                                cell.number_format = 'YYYY-MM-DD'
+                    if all_dfs:
+                        # Combine all DataFrames with spaces between them
+                        sheet_name = str(use_case_id)[:31]  # Excel has 31 char limit
+                        
+                        # Write each DataFrame with appropriate styling
+                        start_row = 0
+                        for df, df_type in all_dfs:
+                            df.to_excel(writer, sheet_name=sheet_name, startrow=start_row, index=False)
+                            
+                            # Get the worksheet
+                            worksheet = writer.sheets[sheet_name]
+                            
+                            # Apply styles based on the type of content
+                            if df_type == 'header':
+                                # Style for main headers
+                                for cell in worksheet[start_row + 1]:
+                                    cell.font = openpyxl.styles.Font(bold=True, size=14)
+                                    cell.fill = openpyxl.styles.PatternFill(start_color='E0E0E0', end_color='E0E0E0', fill_type='solid')
+                            
+                            elif df_type == 'fact_title':
+                                # Style for fact titles
+                                for cell in worksheet[start_row + 1]:
+                                    cell.font = openpyxl.styles.Font(bold=True, size=12)
+                                    cell.fill = openpyxl.styles.PatternFill(start_color='F0F0F0', end_color='F0F0F0', fill_type='solid')
+                            
+                            elif df_type == 'fact_data':
+                                # Style for fact data headers
+                                for cell in worksheet[start_row + 1]:
+                                    cell.font = openpyxl.styles.Font(bold=True)
+                                    cell.fill = openpyxl.styles.PatternFill(start_color='F8F8F8', end_color='F8F8F8', fill_type='solid')
+                                
+                                # Add borders to the data table
+                                table_rows = worksheet[start_row + 1:start_row + len(df) + 1]
+                                thin_border = openpyxl.styles.Border(
+                                    left=openpyxl.styles.Side(style='thin'),
+                                    right=openpyxl.styles.Side(style='thin'),
+                                    top=openpyxl.styles.Side(style='thin'),
+                                    bottom=openpyxl.styles.Side(style='thin')
+                                )
+                                for row in table_rows:
+                                    for cell in row:
+                                        cell.border = thin_border
+                            
+                            elif df_type == 'details':
+                                # Style for insight details
+                                for row in worksheet[start_row + 1:start_row + len(df) + 1]:
+                                    for cell in row:
+                                        cell.font = openpyxl.styles.Font(size=11)
+                                        if cell.column == 1:  # Property column
+                                            cell.font = openpyxl.styles.Font(bold=True)
+                            
+                            # Adjust column widths
+                            for column in worksheet.columns:
+                                max_length = 0
+                                column = [cell for cell in column]
+                                for cell in column:
+                                    try:
+                                        if len(str(cell.value)) > max_length:
+                                            max_length = len(cell.value)
+                                    except:
+                                        pass
+                                adjusted_width = (max_length + 2)
+                                worksheet.column_dimensions[column[0].column_letter].width = min(adjusted_width, 50)
+                            
+                            start_row += len(df) + 2  # Add 2 for spacing
+                
+                # If no sheets were created, add a No Data sheet
+                if not use_case_insights:
+                    df = pd.DataFrame({'Message': ['No data available']})
+                    df.to_excel(writer, sheet_name='No Data', index=False)
         
-        writer.close()
+        except Exception as e:
+            print(f"Error while writing Excel file: {str(e)}")
+            return jsonify({'error': f'Error creating Excel file: {str(e)}'}), 500
+        
+        # Seek to the beginning of the file
         output.seek(0)
         
-        return send_file(
-            output,
-            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            as_attachment=True,
-            download_name=filename
-        )
+        try:
+            response = send_file(
+                output,
+                mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                as_attachment=True,
+                download_name=filename
+            )
+            response.headers['Cache-Control'] = 'no-cache'
+            return response
+            
+        except Exception as e:
+            print(f"Error sending file: {str(e)}")
+            return jsonify({'error': f'Error sending file: {str(e)}'}), 500
         
     except Exception as e:
+        print(f"Error in download_excel: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     # Development only
-    app.run(host='0.0.0.0', port=10000)
+    app.debug = True
+    app.run(host='0.0.0.0', port=10001)
