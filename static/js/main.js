@@ -11,6 +11,10 @@ document.addEventListener('DOMContentLoaded', function() {
     const totalInsights = document.getElementById('totalInsights');
     const totalFacts = document.getElementById('totalFacts');
     const totalDataPoints = document.getElementById('totalDataPoints');
+    const filenameModal = document.getElementById('filenameModal');
+    const filenameInput = document.getElementById('filename');
+    const confirmDownloadBtn = document.getElementById('confirmDownload');
+    const cancelDownloadBtn = document.getElementById('cancelDownload');
 
     let currentJsonData = null;
     let allInsights = [];
@@ -20,6 +24,17 @@ document.addEventListener('DOMContentLoaded', function() {
         const searchTerm = e.target.value.toLowerCase();
         filterInsights(searchTerm);
     }, 300));
+
+    function showError(message) {
+        console.error('Error:', message);
+        if (errorMessage) {
+            errorMessage.textContent = message;
+            errorMessage.classList.remove('hidden');
+        }
+        if (outputSection) {
+            outputSection.classList.add('hidden');
+        }
+    }
 
     function filterInsights(searchTerm) {
         if (!allInsights?.length) return;
@@ -36,15 +51,6 @@ document.addEventListener('DOMContentLoaded', function() {
             
             panel.classList.toggle('hidden', !isVisible);
             tabElements[index]?.parentElement?.classList.toggle('hidden', !isVisible);
-
-            // If this was visible and active, but now being hidden, show the first visible panel
-            if (!isVisible && !panel.classList.contains('hidden')) {
-                const firstVisiblePanel = document.querySelector('.insight-panel:not(.hidden)');
-                const firstVisibleTab = document.querySelector('#insightsTabs button:not(.hidden)');
-                if (firstVisiblePanel && firstVisibleTab) {
-                    activateTab(firstVisibleTab, firstVisiblePanel);
-                }
-            }
         });
     }
 
@@ -53,18 +59,21 @@ document.addEventListener('DOMContentLoaded', function() {
 
         // Deactivate all tabs
         document.querySelectorAll('#insightsTabs button').forEach(btn => {
-            btn.classList.remove('active');
+            btn.classList.remove('active', 'bg-blue-500', 'text-white');
+            btn.classList.add('bg-gray-100', 'text-gray-700');
         });
         document.querySelectorAll('.insight-panel').forEach(p => {
             p.classList.add('hidden');
         });
 
         // Activate selected tab
-        tabButton.classList.add('active');
+        tabButton.classList.remove('bg-gray-100', 'text-gray-700');
+        tabButton.classList.add('active', 'bg-blue-500', 'text-white');
         panel.classList.remove('hidden');
     }
 
     function updateStatistics(insights) {
+        console.log('Updating statistics with insights:', insights);
         if (!Array.isArray(insights)) {
             console.error('Invalid insights data');
             return;
@@ -138,51 +147,67 @@ document.addEventListener('DOMContentLoaded', function() {
         reader.readAsText(file);
     });
 
-    downloadCSVBtn?.addEventListener('click', async function() {
+    // Generate default filename based on current date and first insight
+    function generateDefaultFilename() {
+        const date = new Date().toISOString().split('T')[0];
+        const firstInsight = allInsights[0];
+        const insightType = firstInsight?.useCaseId || 'insights';
+        return `${insightType}_${date}.xlsx`;
+    }
+
+    // Handle modal events
+    downloadCSVBtn?.addEventListener('click', function() {
         if (!currentJsonData) {
-            showError('No data available for download');
+            showError('No data to download');
             return;
         }
+        
+        // Set default filename
+        filenameInput.value = generateDefaultFilename();
+        filenameModal.classList.remove('hidden');
+    });
 
+    cancelDownloadBtn?.addEventListener('click', function() {
+        filenameModal.classList.add('hidden');
+    });
+
+    // Close modal when clicking outside
+    filenameModal?.addEventListener('click', function(e) {
+        if (e.target === filenameModal) {
+            filenameModal.classList.add('hidden');
+        }
+    });
+
+    confirmDownloadBtn?.addEventListener('click', async function() {
+        const filename = filenameInput.value.trim() || generateDefaultFilename();
+        
         try {
-            console.log('Sending data:', {
-                requestId: currentJsonData.requestId,
-                insights: currentJsonData.insights
-            });
-
-            const response = await fetch('/download-csv', {
+            const response = await fetch('/download', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
-                    requestId: currentJsonData.requestId,
-                    insights: currentJsonData.insights
+                    data: currentJsonData,
+                    filename: filename
                 })
             });
 
             if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.error || 'Server error occurred');
+                throw new Error('Download failed');
             }
 
             const blob = await response.blob();
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
-            a.style.display = 'none';
             a.href = url;
-            
-            const contentDisposition = response.headers.get('Content-Disposition');
-            const filenameMatch = contentDisposition && contentDisposition.match(/filename="(.+)"/);
-            a.download = filenameMatch ? filenameMatch[1] : `insights_${currentJsonData.requestId || 'export'}.xlsx`;
-            
+            a.download = filename;
             document.body.appendChild(a);
             a.click();
-            
             window.URL.revokeObjectURL(url);
             document.body.removeChild(a);
+            filenameModal.classList.add('hidden');
         } catch (error) {
-            console.error('Download error:', error);
             showError('Error downloading file: ' + error.message);
         }
     });
@@ -197,67 +222,103 @@ document.addEventListener('DOMContentLoaded', function() {
 
     async function processJsonData(jsonData) {
         try {
+            console.log('Processing JSON data:', jsonData);
+            
+            // If the data already has an insights array, use it directly
+            const dataToSend = jsonData.insights ? jsonData : {
+                insights: Array.isArray(jsonData) ? jsonData : [jsonData]
+            };
+            
+            console.log('Sending data to server:', dataToSend);
+            
             const response = await fetch('/convert', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify(jsonData)
+                body: JSON.stringify(dataToSend)
             });
 
             if (!response.ok) {
-                throw new Error('Network response was not ok');
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Server error occurred');
             }
 
             const result = await response.json();
+            console.log('Received response:', result);
+            
             if (result.error) {
                 throw new Error(result.error);
             }
 
             currentJsonData = result;
             allInsights = result.insights || [];
-            createTabs(result.insights || []);
-            updateStatistics(result.insights || []);
             
-            if (outputSection) outputSection.classList.remove('hidden');
-            if (errorMessage) errorMessage.classList.add('hidden');
+            console.log('Creating tabs with insights:', allInsights);
+            createTabs(allInsights);
+            updateStatistics(allInsights);
+            
+            if (outputSection) {
+                outputSection.classList.remove('hidden');
+            }
+            if (errorMessage) {
+                errorMessage.classList.add('hidden');
+            }
         } catch (error) {
+            console.error('Process error:', error);
             showError('Error processing data: ' + error.message);
         }
     }
 
     function createTabs(insights) {
+        console.log('Creating tabs with insights:', insights);
         const tabsContainer = document.getElementById('insightsTabs');
         const contentContainer = document.getElementById('insightsContent');
+        
+        if (!tabsContainer || !contentContainer) {
+            console.error('Container elements not found');
+            return;
+        }
+        
         tabsContainer.innerHTML = '';
         contentContainer.innerHTML = '';
+
+        if (!Array.isArray(insights) || insights.length === 0) {
+            console.error('No insights to display');
+            showError('No insights found in the data');
+            return;
+        }
 
         insights.forEach((insight, index) => {
             // Create tab button
             const tabButton = document.createElement('button');
-            tabButton.className = 'tab-button' + (index === 0 ? ' active' : '');
+            tabButton.className = `w-full text-left px-4 py-2 rounded-lg transition-colors ${index === 0 ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`;
             tabButton.setAttribute('data-tab', `insight-${index}`);
-            tabButton.textContent = insight.useCaseId || `Insight ${index + 1}`;
+            
+            // Always use useCaseId for tab name
+            const tabName = insight.useCaseId || `Insight ${index + 1}`;
+            tabButton.textContent = tabName;
+            
             tabsContainer.appendChild(tabButton);
 
             // Create content panel
             const panel = document.createElement('div');
             panel.id = `insight-${index}`;
-            panel.className = 'insight-panel' + (index === 0 ? '' : ' hidden');
+            panel.className = `insight-panel ${index === 0 ? '' : 'hidden'}`;
             
             // Add insight details
             const details = document.createElement('div');
-            details.className = 'insight-details';
+            details.className = 'insight-details bg-white p-4 rounded-lg mb-4';
             details.innerHTML = `
-                <h3>Insight Details</h3>
-                <table>
-                    <tr><th>ID</th><td>${insight.id || ''}</td></tr>
-                    <tr><th>Use Case</th><td>${insight.useCaseId || ''}</td></tr>
-                    <tr><th>Type</th><td>${insight.type || ''}</td></tr>
-                    <tr><th>Segment</th><td>${insight.segment || ''}</td></tr>
-                    <tr><th>Score</th><td>${insight.score || ''}</td></tr>
-                    <tr><th>Status</th><td>${insight.status || ''}</td></tr>
-                    <tr><th>Generated Date</th><td>${insight.generatedDate || ''}</td></tr>
+                <h3 class="text-lg font-semibold mb-3">Insight Details</h3>
+                <table class="w-full">
+                    <tr><th class="text-left py-2 px-4 bg-gray-50">ID</th><td class="py-2 px-4">${insight.id || ''}</td></tr>
+                    <tr><th class="text-left py-2 px-4 bg-gray-50">Use Case</th><td class="py-2 px-4">${insight.useCaseId || ''}</td></tr>
+                    <tr><th class="text-left py-2 px-4 bg-gray-50">Type</th><td class="py-2 px-4">${insight.type || ''}</td></tr>
+                    <tr><th class="text-left py-2 px-4 bg-gray-50">Segment</th><td class="py-2 px-4">${insight.segment || ''}</td></tr>
+                    <tr><th class="text-left py-2 px-4 bg-gray-50">Score</th><td class="py-2 px-4">${insight.score || ''}</td></tr>
+                    <tr><th class="text-left py-2 px-4 bg-gray-50">Status</th><td class="py-2 px-4">${insight.status || ''}</td></tr>
+                    <tr><th class="text-left py-2 px-4 bg-gray-50">Generated Date</th><td class="py-2 px-4">${insight.generatedDate || ''}</td></tr>
                 </table>
             `;
             panel.appendChild(details);
@@ -266,30 +327,36 @@ document.addEventListener('DOMContentLoaded', function() {
             const facts = insight.facts || {};
             Object.entries(facts).forEach(([factName, factData]) => {
                 const factSection = document.createElement('div');
-                factSection.className = 'fact-section';
+                factSection.className = 'fact-section bg-white p-4 rounded-lg mb-4';
                 
                 const factHeader = document.createElement('h4');
-                factHeader.className = 'fact-header';
+                factHeader.className = 'text-lg font-semibold mb-2';
                 factHeader.textContent = `Fact: ${factName}`;
                 factSection.appendChild(factHeader);
 
-                // Add fact type
+                // Add fact type if available
                 if (factData.type) {
                     const typeInfo = document.createElement('p');
-                    typeInfo.className = 'fact-type';
+                    typeInfo.className = 'text-sm text-gray-600 mb-3';
                     typeInfo.textContent = `Type: ${factData.type}`;
                     factSection.appendChild(typeInfo);
                 }
 
                 // Create table for fact data
                 if (factData.headers && factData.headers.length > 0) {
+                    const tableWrapper = document.createElement('div');
+                    tableWrapper.className = 'overflow-x-auto';
+                    
                     const table = document.createElement('table');
+                    table.className = 'min-w-full divide-y divide-gray-200';
                     
                     // Add headers with attribute types
                     const thead = document.createElement('thead');
+                    thead.className = 'bg-gray-50';
                     const headerRow = document.createElement('tr');
                     factData.headers.forEach((header, i) => {
                         const th = document.createElement('th');
+                        th.className = 'px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider';
                         const attrType = factData.attributesTypes && factData.attributesTypes[i] 
                             ? ` (${factData.attributesTypes[i]})` 
                             : '';
@@ -301,10 +368,13 @@ document.addEventListener('DOMContentLoaded', function() {
 
                     // Add rows
                     const tbody = document.createElement('tbody');
-                    (factData.rows || []).forEach(row => {
+                    tbody.className = 'bg-white divide-y divide-gray-200';
+                    (factData.rows || []).forEach((row, rowIndex) => {
                         const tr = document.createElement('tr');
+                        tr.className = rowIndex % 2 === 0 ? 'bg-white' : 'bg-gray-50';
                         row.forEach(cell => {
                             const td = document.createElement('td');
+                            td.className = 'px-6 py-4 whitespace-nowrap text-sm text-gray-900';
                             td.textContent = cell !== null ? cell : '';
                             tr.appendChild(td);
                         });
@@ -312,7 +382,8 @@ document.addEventListener('DOMContentLoaded', function() {
                     });
                     table.appendChild(tbody);
                     
-                    factSection.appendChild(table);
+                    tableWrapper.appendChild(table);
+                    factSection.appendChild(tableWrapper);
                 }
 
                 panel.appendChild(factSection);
@@ -322,28 +393,12 @@ document.addEventListener('DOMContentLoaded', function() {
         });
 
         // Add click handlers for tabs
-        const tabButtons = document.querySelectorAll('.tab-button');
+        const tabButtons = document.querySelectorAll('#insightsTabs button');
         tabButtons.forEach(button => {
             button.addEventListener('click', () => {
-                // Remove active class from all tabs and hide all panels
-                tabButtons.forEach(b => b.classList.remove('active'));
-                document.querySelectorAll('.insight-panel').forEach(p => p.classList.add('hidden'));
-                
-                // Add active class to clicked tab and show corresponding panel
-                button.classList.add('active');
                 const panel = document.getElementById(button.getAttribute('data-tab'));
-                if (panel) {
-                    panel.classList.remove('hidden');
-                }
+                activateTab(button, panel);
             });
         });
-    }
-
-    function showError(message) {
-        if (!errorMessage || !outputSection) return;
-        
-        errorMessage.textContent = message;
-        errorMessage.classList.remove('hidden');
-        outputSection.classList.add('hidden');
     }
 });

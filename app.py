@@ -6,6 +6,7 @@ import datetime
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
 from openpyxl.utils import get_column_letter
+import pandas as pd
 
 app = Flask(__name__)
 
@@ -17,16 +18,22 @@ def index():
 def convert():
     try:
         data = request.get_json()
+        print("Received data:", json.dumps(data, indent=2))
+        
         if not data or 'insights' not in data:
+            print("No valid insights data found")
             return jsonify({'error': 'No valid insights data provided'}), 400
         
         insights = data['insights']
+        print(f"Processing {len(insights)} insights")
         processed_insights = []
         
-        for insight in insights:
+        for i, insight in enumerate(insights):
+            print(f"Processing insight {i + 1}")
             processed_facts = {}
             if 'facts' in insight:
                 for fact_name, fact_data in insight['facts'].items():
+                    print(f"Processing fact: {fact_name}")
                     if isinstance(fact_data, dict) and 'cols' in fact_data and 'rows' in fact_data:
                         processed_facts[fact_name] = {
                             'headers': fact_data['cols'],
@@ -35,7 +42,7 @@ def convert():
                             'attributesTypes': fact_data.get('attributesTypes', [])
                         }
             
-            processed_insights.append({
+            processed_insight = {
                 'id': insight.get('id', ''),
                 'insightId': insight.get('insightId', ''),
                 'useCaseId': insight.get('useCaseId', ''),
@@ -45,12 +52,16 @@ def convert():
                 'status': insight.get('status', ''),
                 'type': insight.get('type', ''),
                 'facts': processed_facts
-            })
+            }
+            print(f"Processed insight: {json.dumps(processed_insight, indent=2)}")
+            processed_insights.append(processed_insight)
 
-        return jsonify({
+        result = {
             'requestId': data.get('requestId', ''),
             'insights': processed_insights
-        })
+        }
+        print(f"Returning {len(processed_insights)} insights")
+        return jsonify(result)
     except json.JSONDecodeError:
         return jsonify({'error': 'Invalid JSON format'}), 400
     except Exception as e:
@@ -60,210 +71,78 @@ def convert():
 def favicon():
     return app.send_from_directory('static', 'favicon.ico')
 
-@app.route('/download-csv', methods=['POST'])
-def download_csv():
+@app.route('/download', methods=['POST'])
+def download_excel():
     try:
-        print("Received download request")
-        if not request.is_json:
-            raise ValueError("Request must be JSON")
+        request_data = request.get_json()
+        if not request_data or 'data' not in request_data:
+            return jsonify({'error': 'No data provided'}), 400
             
-        data = request.get_json()
-        print("Received data:", data)
+        data = request_data['data']
+        filename = request_data.get('filename', 'insights.xlsx')
         
-        if not data:
-            raise ValueError("No data received")
-            
-        insights = data.get('insights', [])
-        if not insights:
-            raise ValueError("No insights found in data")
-            
-        request_id = data.get('requestId', 'export')
-        print(f"Processing {len(insights)} insights")
+        # Ensure filename has .xlsx extension
+        if not filename.lower().endswith('.xlsx'):
+            filename += '.xlsx'
 
-        # Create an Excel workbook
-        workbook = openpyxl.Workbook()
+        # Create Excel file in memory
+        output = BytesIO()
+        writer = pd.ExcelWriter(output, engine='openpyxl')
         
-        # Create a sheet for each insight
-        for idx, insight in enumerate(insights):
-            print(f"Processing insight {idx + 1}/{len(insights)}")
-            
-            # Validate insight data
-            if not isinstance(insight, dict):
-                print(f"Warning: Invalid insight format at index {idx}")
-                continue
-                
-            # Create a sheet with a valid name using useCase (max 31 chars, no special chars)
-            sheet_name = f"UseCase_{idx + 1}"
-            if 'useCaseId' in insight and insight['useCaseId']:
-                sheet_name = str(insight['useCaseId'])
-            sheet_name = "".join(c for c in sheet_name if c.isalnum() or c in ('_', '-'))[-31:]
-            
-            sheet = workbook.create_sheet(sheet_name)
-
-            # Add insight details in a table format
-            sheet.append(['Insight Details'])
-            details_table = [
-                ['Field', 'Value'],
-                ['ID', str(insight.get('id', ''))],
-                ['Use Case', str(insight.get('useCaseId', ''))],
-                ['Type', str(insight.get('type', ''))],
-                ['Segment', str(insight.get('segment', ''))],
-                ['Score', str(insight.get('score', ''))],
-                ['Status', str(insight.get('status', ''))],
-                ['Generated Date', str(insight.get('generatedDate', ''))]
-            ]
-
-            # Style the details table
-            for row_idx, row in enumerate(details_table):
-                sheet.append(row)
-                for col_idx, value in enumerate(row):
-                    cell = sheet.cell(row=sheet.max_row, column=col_idx + 1)
-                    cell.border = Border(
-                        left=Side(style='thin'),
-                        right=Side(style='thin'),
-                        top=Side(style='thin'),
-                        bottom=Side(style='thin')
-                    )
-                    if row_idx == 0:  # Header row
-                        cell.font = Font(bold=True)
-                        cell.fill = PatternFill(start_color='E0E0E0', end_color='E0E0E0', fill_type='solid')
-
-            sheet.append([])  # Empty row for spacing
-
-            # Add facts
+        # Process each insight
+        for i, insight in enumerate(data.get('insights', [])):
             facts = insight.get('facts', {})
-            if not isinstance(facts, dict):
-                print(f"Warning: Invalid facts format in insight {idx}")
-                continue
-                
             for fact_name, fact_data in facts.items():
-                print(f"Processing fact: {fact_name}")
-                if not isinstance(fact_data, dict):
-                    print(f"Warning: Invalid fact data format for {fact_name}")
-                    continue
+                if isinstance(fact_data, dict) and 'cols' in fact_data and 'rows' in fact_data:
+                    # Create DataFrame from fact data
+                    df = pd.DataFrame(fact_data['rows'], columns=fact_data['cols'])
                     
-                # Add fact header
-                sheet.append([f'Fact: {fact_name}'])
-                sheet.append(['Type:', str(fact_data.get('type', ''))])
-                sheet.append([])  # Empty row for spacing
-
-                # Add fact table headers and data
-                headers = fact_data.get('headers', [])
-                if not isinstance(headers, list):
-                    print(f"Warning: Invalid headers format in fact {fact_name}")
-                    continue
+                    # Try to convert date columns and sort
+                    date_columns = []
+                    for col in df.columns:
+                        # Check if column name contains date-related keywords
+                        if any(date_word in col.lower() for date_word in ['date', 'time', 'day']):
+                            try:
+                                # Try to convert to datetime
+                                df[col] = pd.to_datetime(df[col])
+                                date_columns.append(col)
+                            except:
+                                continue
                     
-                attribute_types = fact_data.get('attributesTypes', [])
-                if not isinstance(attribute_types, list):
-                    print(f"Warning: Invalid attributeTypes format in fact {fact_name}")
-                    attribute_types = []
-                
-                # Combine headers with attribute types
-                header_row = []
-                for i, header in enumerate(headers):
-                    attr_type = attribute_types[i] if i < len(attribute_types) else ''
-                    header_text = f"{header} ({attr_type})" if attr_type else str(header)
-                    header_row.append(header_text)
-                
-                # Create and style the fact table
-                if header_row:
-                    # Add header row
-                    sheet.append(header_row)
-                    for col_idx, _ in enumerate(header_row):
-                        cell = sheet.cell(row=sheet.max_row, column=col_idx + 1)
-                        cell.font = Font(bold=True)
-                        cell.fill = PatternFill(start_color='E0E0E0', end_color='E0E0E0', fill_type='solid')
-                        cell.border = Border(
-                            left=Side(style='thin'),
-                            right=Side(style='thin'),
-                            top=Side(style='thin'),
-                            bottom=Side(style='thin')
-                        )
-
-                    # Add and style data rows
-                    rows = fact_data.get('rows', [])
-                    if not isinstance(rows, list):
-                        print(f"Warning: Invalid rows format in fact {fact_name}")
-                        continue
-                        
-                    for row in rows:
-                        if not isinstance(row, list):
-                            print(f"Warning: Invalid row format: {row}")
-                            continue
-                        # Convert all values to strings and handle None
-                        processed_row = [str(cell) if cell is not None else '' for cell in row]
-                        sheet.append(processed_row)
-                        
-                        # Style the row
-                        for col_idx, _ in enumerate(processed_row):
-                            cell = sheet.cell(row=sheet.max_row, column=col_idx + 1)
-                            cell.border = Border(
-                                left=Side(style='thin'),
-                                right=Side(style='thin'),
-                                top=Side(style='thin'),
-                                bottom=Side(style='thin')
-                            )
-                
-                sheet.append([])  # Empty row for spacing
-
-            # Apply general styling
-            print(f"Applying styles to sheet {sheet_name}")
-            for row in sheet.rows:
-                for cell in row:
-                    try:
-                        cell.font = Font(name='Arial')
-                        if 'Insight Details' in str(cell.value) or 'Fact:' in str(cell.value):
-                            cell.font = Font(bold=True, size=12)
-                    except Exception as e:
-                        print(f"Warning: Error applying style to cell: {e}")
-
-            # Adjust column widths
-            print(f"Adjusting column widths for sheet {sheet_name}")
-            for column in sheet.columns:
-                try:
-                    max_length = 0
-                    column_letter = get_column_letter(column[0].column)
-                    for cell in column:
-                        try:
-                            if cell.value:
-                                max_length = max(max_length, len(str(cell.value)))
-                        except:
-                            pass
-                    adjusted_width = min(max_length + 2, 100)  # Cap width at 100
-                    sheet.column_dimensions[column_letter].width = adjusted_width
-                except Exception as e:
-                    print(f"Warning: Error adjusting column width: {e}")
-
-            # Freeze the header rows
-            sheet.freeze_panes = 'A2'
-
-        # Remove the default sheet if it exists
-        if 'Sheet' in workbook.sheetnames:
-            workbook.remove(workbook['Sheet'])
-
-        # Save to a BytesIO object
-        print("Saving workbook")
-        excel_file = BytesIO()
-        workbook.save(excel_file)
-        excel_file.seek(0)
-
-        print("Sending file")
-        response = send_file(
-            excel_file,
+                    # Sort by the first date column found if any exist
+                    if date_columns:
+                        df = df.sort_values(by=date_columns[0])
+                    
+                    # Create sheet name from insight and fact name
+                    sheet_name = f"{insight.get('useCaseId', f'Insight{i+1}')}_{fact_name}"[:31]
+                    
+                    # Write DataFrame to Excel sheet
+                    df.to_excel(writer, sheet_name=sheet_name, index=False)
+                    
+                    # Get the worksheet
+                    worksheet = writer.sheets[sheet_name]
+                    
+                    # Format date columns
+                    for col_idx, col_name in enumerate(df.columns):
+                        if col_name in date_columns:
+                            # Format date cells
+                            for row in range(2, len(df) + 2):  # Start from row 2 to skip header
+                                cell = worksheet.cell(row=row, column=col_idx + 1)
+                                cell.number_format = 'YYYY-MM-DD'
+        
+        writer.close()
+        output.seek(0)
+        
+        return send_file(
+            output,
             mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             as_attachment=True,
-            download_name=f'insights_{request_id}.xlsx'
+            download_name=filename
         )
         
-        # Add CORS headers
-        response.headers.add('Access-Control-Allow-Origin', '*')
-        return response
-
     except Exception as e:
-        import traceback
-        error_msg = f"Error: {str(e)}\n{traceback.format_exc()}"
-        print(error_msg)
-        return jsonify({'error': error_msg}), 500
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5013)
+    # Development only
+    app.run(host='0.0.0.0', port=10000)
