@@ -7,23 +7,15 @@ document.addEventListener('DOMContentLoaded', function() {
     const errorMessage = document.getElementById('errorMessage');
     const downloadCSVBtn = document.getElementById('downloadCSV');
     const copyMarkdownBtn = document.getElementById('copyMarkdown');
-    const searchInput = document.getElementById('searchInput');
-    const totalInsights = document.getElementById('totalInsights');
-    const totalFacts = document.getElementById('totalFacts');
-    const totalDataPoints = document.getElementById('totalDataPoints');
     const filenameModal = document.getElementById('filenameModal');
     const filenameInput = document.getElementById('filename');
     const confirmDownloadBtn = document.getElementById('confirmDownload');
     const cancelDownloadBtn = document.getElementById('cancelDownload');
+    const factSearch = document.getElementById('factSearch');
+    const noResultsMessage = document.getElementById('noResultsMessage');
 
     let currentJsonData = null;
     let allInsights = [];
-
-    // Search functionality
-    searchInput?.addEventListener('input', debounce(function(e) {
-        const searchTerm = e.target.value.toLowerCase();
-        filterInsights(searchTerm);
-    }, 300));
 
     function showError(message) {
         console.error('Error:', message);
@@ -34,24 +26,6 @@ document.addEventListener('DOMContentLoaded', function() {
         if (outputSection) {
             outputSection.classList.add('hidden');
         }
-    }
-
-    function filterInsights(searchTerm) {
-        if (!allInsights?.length) return;
-
-        const insightElements = document.querySelectorAll('.insight-panel');
-        const tabElements = document.querySelectorAll('#insightsTabs button');
-
-        insightElements.forEach((panel, index) => {
-            if (index >= allInsights.length) return;
-            
-            const insight = allInsights[index];
-            const insightText = JSON.stringify(insight).toLowerCase();
-            const isVisible = insightText.includes(searchTerm);
-            
-            panel.classList.toggle('hidden', !isVisible);
-            tabElements[index]?.parentElement?.classList.toggle('hidden', !isVisible);
-        });
     }
 
     function activateTab(tabButton, panel) {
@@ -95,21 +69,13 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
 
+        const totalInsights = document.getElementById('totalInsights');
+        const totalFacts = document.getElementById('totalFacts');
+        const totalDataPointsElement = document.getElementById('totalDataPoints');
+
         if (totalInsights) totalInsights.textContent = insights.length.toString();
         if (totalFacts) totalFacts.textContent = totalFactsCount.toString();
-        if (totalDataPoints) totalDataPoints.textContent = totalDataPoints.toLocaleString();
-    }
-
-    function debounce(func, wait) {
-        let timeout;
-        return function executedFunction(...args) {
-            const later = () => {
-                clearTimeout(timeout);
-                func(...args);
-            };
-            clearTimeout(timeout);
-            timeout = setTimeout(later, wait);
-        };
+        if (totalDataPointsElement) totalDataPointsElement.textContent = totalDataPoints.toLocaleString();
     }
 
     convertBtn?.addEventListener('click', async function() {
@@ -118,11 +84,12 @@ document.addEventListener('DOMContentLoaded', function() {
             showError('Please enter JSON data');
             return;
         }
-
+        
         try {
             const jsonData = JSON.parse(jsonText);
             await processJsonData(jsonData);
         } catch (error) {
+            console.error('Parse error:', error);
             showError('Invalid JSON format: ' + error.message);
         }
     });
@@ -131,17 +98,18 @@ document.addEventListener('DOMContentLoaded', function() {
         fileInput?.click();
     });
 
-    fileInput?.addEventListener('change', function(event) {
-        const file = event.target?.files?.[0];
+    fileInput?.addEventListener('change', function(e) {
+        const file = e.target.files[0];
         if (!file) return;
 
         const reader = new FileReader();
         reader.onload = async function(e) {
             try {
-                const jsonData = JSON.parse(e.target?.result);
+                const jsonData = JSON.parse(e.target.result);
                 await processJsonData(jsonData);
             } catch (error) {
-                showError('Invalid JSON file: ' + error.message);
+                console.error('File read error:', error);
+                showError('Error reading file: ' + error.message);
             }
         };
         reader.readAsText(file);
@@ -298,6 +266,90 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
+    function debounce(func, wait) {
+        let timeout;
+        return function executedFunction(...args) {
+            const later = () => {
+                clearTimeout(timeout);
+                func(...args);
+            };
+            clearTimeout(timeout);
+            timeout = setTimeout(later, wait);
+        };
+    }
+
+    factSearch?.addEventListener('input', debounce(function(e) {
+        const searchTerm = e.target.value.toLowerCase();
+        filterFacts(searchTerm);
+    }, 300));
+
+    function filterFacts(searchTerm) {
+        console.log('Filtering facts with term:', searchTerm);
+        const contentContainer = document.getElementById('insightsContent');
+        let anyMatches = false;
+
+        // For each insight panel
+        document.querySelectorAll('.insight-panel').forEach(panel => {
+            // Process each fact table in the panel
+            panel.querySelectorAll('.fact-section').forEach(factSection => {
+                const table = factSection.querySelector('table');
+                if (!table) return;
+
+                const headers = Array.from(table.querySelectorAll('thead th')).map(th => th.textContent.toLowerCase());
+                const idColumnIndex = headers.findIndex(header => header.includes('id'));
+                
+                // Find indices of matching columns
+                const matchingIndices = headers.map((header, index) => {
+                    if (searchTerm === '') return index; // Keep all columns if no search term
+                    if (header.includes(searchTerm)) return index; // Keep matching columns
+                    if (idColumnIndex !== -1 && index === idColumnIndex) return index; // Always keep ID column
+                    return -1;
+                }).filter(index => index !== -1);
+
+                // If we have matches or no search term
+                if (matchingIndices.length > 0) {
+                    anyMatches = true;
+                    factSection.style.display = 'block';
+
+                    // Show only matching columns
+                    table.querySelectorAll('tr').forEach(row => {
+                        Array.from(row.children).forEach((cell, index) => {
+                            if (matchingIndices.includes(index)) {
+                                cell.style.display = '';
+                                // Highlight matching headers
+                                if (row.parentElement.tagName === 'THEAD' && searchTerm && index !== idColumnIndex) {
+                                    cell.classList.add('bg-yellow-200');
+                                }
+                            } else {
+                                cell.style.display = 'none';
+                            }
+                        });
+                    });
+                } else {
+                    // Hide fact sections with no matches
+                    factSection.style.display = 'none';
+                }
+            });
+
+            // Check if this panel has any visible facts
+            const hasVisibleFacts = Array.from(panel.querySelectorAll('.fact-section')).some(
+                section => section.style.display !== 'none'
+            );
+            
+            // Show/hide the entire panel based on whether it has visible facts
+            if (searchTerm === '' || hasVisibleFacts) {
+                panel.style.display = '';
+            } else {
+                panel.style.display = 'none';
+            }
+        });
+
+        // Show/hide no results message
+        if (noResultsMessage) {
+            noResultsMessage.classList.toggle('hidden', anyMatches || !searchTerm);
+        }
+    }
+
     function createTabs(insights) {
         console.log('Creating tabs with insights:', insights);
         const tabsContainer = document.getElementById('insightsTabs');
@@ -352,43 +404,64 @@ document.addEventListener('DOMContentLoaded', function() {
             panel.appendChild(details);
 
             // Add facts
-            const facts = insight.facts || {};
-            Object.entries(facts).forEach(([factName, factData]) => {
-                const factSection = document.createElement('div');
-                factSection.className = 'fact-section bg-white p-4 rounded-lg mb-4';
+            if (insight.facts) {
+                console.log('Processing facts for insight:', insight.id);
+                console.log('Facts:', insight.facts);
                 
-                const factHeader = document.createElement('h4');
-                factHeader.className = 'text-lg font-semibold mb-2';
-                factHeader.textContent = `Fact: ${factName}`;
-                factSection.appendChild(factHeader);
+                const factsContainer = document.createElement('div');
+                factsContainer.className = 'facts-container';
+                
+                Object.entries(insight.facts).forEach(([factName, factData]) => {
+                    console.log('Processing fact:', factName);
+                    console.log('Fact data:', factData);
+                    
+                    // Skip storyId and other non-table facts
+                    if (!factData || typeof factData !== 'object') {
+                        console.log('Skipping fact due to invalid data:', factName);
+                        return;
+                    }
 
-                // Add fact type if available
-                if (factData.type) {
-                    const typeInfo = document.createElement('p');
-                    typeInfo.className = 'text-sm text-gray-600 mb-3';
-                    typeInfo.textContent = `Type: ${factData.type}`;
-                    factSection.appendChild(typeInfo);
-                }
+                    // Handle both direct arrays and objects with cols/rows
+                    let columns = factData.cols || factData.headers || [];
+                    let rows = factData.rows || [];
+                    let type = factData.type || 'Table';
 
-                // Create table for fact data
-                if (factData.headers && factData.rows) {
+                    console.log('Columns:', columns);
+                    console.log('Rows:', rows);
+                    console.log('Type:', type);
+
+                    if (!Array.isArray(columns) || !Array.isArray(rows)) {
+                        console.log('Skipping fact due to invalid columns/rows:', factName);
+                        return;
+                    }
+
+                    const factSection = document.createElement('div');
+                    factSection.className = 'fact-section bg-white p-4 rounded-lg mb-4';
+                    
+                    // Add fact header
+                    const factHeader = document.createElement('h4');
+                    factHeader.className = 'text-lg font-semibold mb-2';
+                    factHeader.textContent = `${factName} (${type})`;
+                    factSection.appendChild(factHeader);
+
+                    // Create table
                     const tableWrapper = document.createElement('div');
                     tableWrapper.className = 'overflow-x-auto';
                     
                     const table = document.createElement('table');
                     table.className = 'min-w-full divide-y divide-gray-200';
                     
-                    // Add headers with attribute types
+                    // Add headers
                     const thead = document.createElement('thead');
                     thead.className = 'bg-gray-50';
                     const headerRow = document.createElement('tr');
-                    factData.headers.forEach((header, i) => {
+                    columns.forEach((col, i) => {
                         const th = document.createElement('th');
                         th.className = 'px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider';
                         const attrType = factData.attributesTypes && factData.attributesTypes[i] 
                             ? ` (${factData.attributesTypes[i]})` 
                             : '';
-                        th.textContent = header + attrType;
+                        th.textContent = col + attrType;
                         headerRow.appendChild(th);
                     });
                     thead.appendChild(headerRow);
@@ -397,13 +470,27 @@ document.addEventListener('DOMContentLoaded', function() {
                     // Add rows
                     const tbody = document.createElement('tbody');
                     tbody.className = 'bg-white divide-y divide-gray-200';
-                    (factData.rows || []).forEach((row, rowIndex) => {
+                    rows.forEach((row, rowIndex) => {
                         const tr = document.createElement('tr');
                         tr.className = rowIndex % 2 === 0 ? 'bg-white' : 'bg-gray-50';
                         row.forEach(cell => {
                             const td = document.createElement('td');
                             td.className = 'px-6 py-4 whitespace-nowrap text-sm text-gray-900';
-                            td.textContent = cell !== null ? cell : '';
+                            // Handle different cell types
+                            let displayValue = '';
+                            if (cell === null || cell === undefined) {
+                                displayValue = '';
+                            } else if (typeof cell === 'object') {
+                                try {
+                                    // Try to extract English text if it's a language object
+                                    displayValue = cell.en || JSON.stringify(cell);
+                                } catch (e) {
+                                    displayValue = String(cell);
+                                }
+                            } else {
+                                displayValue = String(cell);
+                            }
+                            td.textContent = displayValue;
                             tr.appendChild(td);
                         });
                         tbody.appendChild(tr);
@@ -412,20 +499,22 @@ document.addEventListener('DOMContentLoaded', function() {
                     
                     tableWrapper.appendChild(table);
                     factSection.appendChild(tableWrapper);
-                }
-
-                panel.appendChild(factSection);
-            });
+                    factsContainer.appendChild(factSection);
+                });
+                
+                panel.appendChild(factsContainer);
+            } else {
+                console.log('No facts found for insight:', insight.id);
+            }
 
             contentContainer.appendChild(panel);
-        });
 
-        // Add click handlers for tabs
-        const tabButtons = document.querySelectorAll('#insightsTabs button');
-        tabButtons.forEach(button => {
-            button.addEventListener('click', () => {
-                const panel = document.getElementById(button.getAttribute('data-tab'));
-                activateTab(button, panel);
+            // Add click handler for tab
+            tabButton.addEventListener('click', () => {
+                const targetPanel = document.getElementById(`insight-${index}`);
+                if (targetPanel) {
+                    activateTab(tabButton, targetPanel);
+                }
             });
         });
     }

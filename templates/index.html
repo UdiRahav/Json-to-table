@@ -47,18 +47,14 @@
                 </div>
             </div>
 
-            <!-- Search Box -->
-            <div class="search-container mb-6">
-                <div class="relative">
-                    <input type="text" id="searchInput" 
-                           class="search-input w-full px-4 py-2 border rounded-lg pr-10 focus:outline-none focus:border-blue-500" 
-                           placeholder="Search in insights and facts...">
-                    <span class="search-icon absolute right-3 top-2 text-gray-400">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                        </svg>
-                    </span>
+            <!-- Search Bar -->
+            <div class="flex gap-4 mb-6">
+                <div class="flex-grow">
+                    <input type="text" id="factSearch" placeholder="Search for columns in facts..." class="w-full p-2 border rounded-lg focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                    <p id="noResultsMessage" class="hidden mt-2 text-gray-600 italic">No matching columns found</p>
                 </div>
+                <button id="downloadCSV" class="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600">Download as Excel</button>
+                <button id="copyMarkdown" class="bg-purple-500 text-white px-4 py-2 rounded hover:bg-purple-600">Copy as Markdown</button>
             </div>
 
             <div class="insights-container grid grid-cols-[200px,1fr] gap-4">
@@ -68,10 +64,7 @@
                 <div id="insightsContent" class="insights-content bg-gray-50 p-4 rounded-lg"></div>
             </div>
 
-            <div class="flex justify-end space-x-4 mt-4">
-                <button id="downloadCSV" class="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600 transition-colors">Download as Excel</button>
-                <button id="copyMarkdown" class="bg-purple-500 text-white px-4 py-2 rounded hover:bg-purple-600 transition-colors">Copy as Markdown</button>
-            </div>
+            <!-- Filename Modal -->
             <div id="filenameModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
                 <div class="bg-white p-6 rounded-lg shadow-lg">
                     <h3 class="text-lg font-semibold mb-4">Download Excel File</h3>
