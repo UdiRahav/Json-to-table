@@ -7,6 +7,11 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
     <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="/static/js/analytics.js"></script>
+    <script>
+        // Initialize analytics when the page loads
+        window.addEventListener('load', initializeAnalytics);
+    </script>
 </head>
 <body class="bg-gray-100 min-h-screen p-8">
     <div class="container max-w-7xl mx-auto">
