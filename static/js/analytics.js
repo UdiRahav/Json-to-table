@@ -3,7 +3,7 @@ function initializeAnalytics() {
     // Google Analytics 4 initialization code
     const script = document.createElement('script');
     script.async = true;
-    script.src = 'https://www.googletagmanager.com/gtag/js?id=MEASUREMENT_ID'; // Replace MEASUREMENT_ID with your GA4 ID
+    script.src = 'https://www.googletagmanager.com/gtag/js?id=G-PDW4G5QQGZ';
     document.head.appendChild(script);
 
     window.dataLayer = window.dataLayer || [];
@@ -11,7 +11,7 @@ function initializeAnalytics() {
         dataLayer.push(arguments);
     }
     gtag('js', new Date());
-    gtag('config', 'MEASUREMENT_ID'); // Replace MEASUREMENT_ID with your GA4 ID
+    gtag('config', 'G-PDW4G5QQGZ');
 
     // Custom event tracking
     trackAppUsage();
